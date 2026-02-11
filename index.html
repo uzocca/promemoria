@@ -288,11 +288,25 @@
             padding: 20px;
             transition: all 0.3s;
             position: relative;
+            cursor: pointer;
         }
 
         .promemoria-item:hover {
             border-color: var(--blue);
             transform: translateY(-2px);
+        }
+
+        .promemoria-item:hover::after {
+            content: '✏️ Clicca per modificare';
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: var(--blue);
+            color: var(--bg-dark);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.75em;
+            font-weight: 600;
         }
 
         .promemoria-item.completed {
@@ -756,15 +770,15 @@
             <div class="row">
                 <div class="input-group">
                     <label>🏷️ Categoria</label>
-                    <div style="display: flex; gap: 10px;">
-                        <select id="category" style="flex: 1;">
+                    <div style="display: flex; gap: 10px; align-items: stretch;">
+                        <select id="category" style="flex: 1; min-width: 0;">
                             <option value="personale">📱 Personale</option>
                             <option value="lavoro">💼 Lavoro</option>
                             <option value="idee">💡 Idee</option>
                             <option value="urgente">⚡ Urgente</option>
                             <option value="altro">📌 Altro</option>
                         </select>
-                        <button onclick="showAddCategoryModal()" style="padding: 12px 20px; background: var(--green); color: var(--bg-dark); border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">
+                        <button onclick="showAddCategoryModal()" style="padding: 12px 16px; background: var(--green); color: var(--bg-dark); border: none; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 1.2em; line-height: 1; flex-shrink: 0;">
                             ➕
                         </button>
                     </div>
@@ -864,6 +878,45 @@
         </div>
     </div>
 
+    <!-- Edit Promemoria Modal -->
+    <div id="editPromemoriaModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>✏️ Modifica Promemoria</h2>
+                <button class="modal-close" onclick="closeEditModal()">✕</button>
+            </div>
+            <div class="input-group">
+                <label>📝 Testo</label>
+                <textarea id="editText" style="min-height: 100px;"></textarea>
+            </div>
+            <div class="row">
+                <div class="input-group">
+                    <label>🏷️ Categoria</label>
+                    <select id="editCategory"></select>
+                </div>
+                <div class="input-group">
+                    <label>🎯 Priorità</label>
+                    <select id="editPriority">
+                        <option value="low">🟢 Bassa</option>
+                        <option value="medium">🟡 Media</option>
+                        <option value="high">🔴 Alta</option>
+                    </select>
+                </div>
+            </div>
+            <div class="input-group">
+                <label>🔗 Link</label>
+                <input type="text" id="editLink" placeholder="https://...">
+            </div>
+            <div class="input-group">
+                <label>⏰ Notifica</label>
+                <input type="datetime-local" id="editNotification">
+            </div>
+            <button onclick="saveEditedPromemoria()" class="btn-save" style="width: 100%; margin-top: 10px;">
+                💾 Salva Modifiche
+            </button>
+        </div>
+    </div>
+
     <script>
         // Storage Keys
         const STORAGE_KEY = 'promemoria_pro';
@@ -878,6 +931,7 @@
         let currentFilter = 'all';
         let notificationTimers = {};
         let selectedEmoji = '📌';
+        let editingPromemoriaId = null;
 
         // Default categories that cannot be deleted
         const defaultCategories = ['personale', 'lavoro', 'idee', 'urgente', 'altro'];
@@ -1059,7 +1113,11 @@
 
         // Request notification permission
         if ('Notification' in window && Notification.permission === 'default') {
-            Notification.requestPermission();
+            Notification.requestPermission().then(permission => {
+                if (permission === 'granted') {
+                    console.log('Permesso notifiche concesso');
+                }
+            });
         }
 
         // Search
@@ -1105,7 +1163,7 @@
                     : p.category.charAt(0).toUpperCase() + p.category.slice(1);
                 
                 return `
-                <div class="promemoria-item ${p.completed ? 'completed' : ''}">
+                <div class="promemoria-item ${p.completed ? 'completed' : ''}" onclick="editPromemoria(${p.id}, event)">
                     <div class="promemoria-header">
                         <div class="promemoria-meta">
                             <span class="promemoria-date">${p.date} • ${p.time}</span>
@@ -1119,12 +1177,12 @@
                         </div>
                     </div>
                     <div class="promemoria-text">${p.text}</div>
-                    ${p.link ? `<a href="${p.link}" class="promemoria-link" target="_blank">🔗 ${p.link}</a><br>` : ''}
+                    ${p.link ? `<a href="${p.link}" class="promemoria-link" target="_blank" onclick="event.stopPropagation()">🔗 ${p.link}</a><br>` : ''}
                     <div class="promemoria-footer">
                         <div class="promemoria-badges">
                             <span class="badge">${p.source === 'voce' ? '🎤 Vocale' : '⌨️ Testo'}</span>
                         </div>
-                        <div class="promemoria-actions">
+                        <div class="promemoria-actions" onclick="event.stopPropagation()">
                             <button class="btn-small btn-complete" onclick="toggleComplete(${p.id})">
                                 ${p.completed ? '↩️ Riapri' : '✅ Completa'}
                             </button>
@@ -1399,6 +1457,100 @@
             
             container.innerHTML = html;
         }
+
+        // Edit Promemoria
+        window.editPromemoria = function(id, event) {
+            // Don't open edit if clicking on buttons or links
+            if (event && (event.target.tagName === 'BUTTON' || event.target.tagName === 'A')) {
+                return;
+            }
+
+            const promemoria = window.promemoria.find(p => p.id === id);
+            if (!promemoria) return;
+
+            editingPromemoriaId = id;
+
+            // Populate edit form
+            document.getElementById('editText').value = promemoria.text;
+            document.getElementById('editLink').value = promemoria.link || '';
+            document.getElementById('editPriority').value = promemoria.priority;
+            
+            // Update category select with all categories
+            const editCategorySelect = document.getElementById('editCategory');
+            let optionsHTML = `
+                <option value="personale">📱 Personale</option>
+                <option value="lavoro">💼 Lavoro</option>
+                <option value="idee">💡 Idee</option>
+                <option value="urgente">⚡ Urgente</option>
+                <option value="altro">📌 Altro</option>
+            `;
+            
+            if (customCategories.length > 0) {
+                optionsHTML += '<option disabled>──────────</option>';
+                customCategories.forEach(cat => {
+                    optionsHTML += `<option value="${cat.id}">${cat.emoji} ${cat.label}</option>`;
+                });
+            }
+            
+            editCategorySelect.innerHTML = optionsHTML;
+            editCategorySelect.value = promemoria.category;
+
+            // Set notification time if exists
+            if (promemoria.notificationTime) {
+                const date = new Date(promemoria.notificationTime);
+                const localDateTime = new Date(date.getTime() - (date.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
+                document.getElementById('editNotification').value = localDateTime;
+            } else {
+                document.getElementById('editNotification').value = '';
+            }
+
+            // Show modal
+            document.getElementById('editPromemoriaModal').classList.add('active');
+        };
+
+        window.closeEditModal = function() {
+            document.getElementById('editPromemoriaModal').classList.remove('active');
+            editingPromemoriaId = null;
+        };
+
+        window.saveEditedPromemoria = function() {
+            if (!editingPromemoriaId) return;
+
+            const promemoria = window.promemoria.find(p => p.id === editingPromemoriaId);
+            if (!promemoria) return;
+
+            const newText = document.getElementById('editText').value.trim();
+            if (!newText) {
+                alert('Il testo non può essere vuoto!');
+                return;
+            }
+
+            // Update promemoria
+            promemoria.text = newText;
+            promemoria.category = document.getElementById('editCategory').value;
+            promemoria.priority = document.getElementById('editPriority').value;
+            promemoria.link = document.getElementById('editLink').value.trim();
+            
+            const newNotificationTime = document.getElementById('editNotification').value;
+            
+            // Clear old notification if exists
+            if (notificationTimers[editingPromemoriaId]) {
+                clearTimeout(notificationTimers[editingPromemoriaId]);
+                delete notificationTimers[editingPromemoriaId];
+            }
+
+            promemoria.notificationTime = newNotificationTime || null;
+            
+            // Schedule new notification if set
+            if (promemoria.notificationTime && !promemoria.completed) {
+                scheduleNotification(promemoria);
+            }
+
+            saveToLocalStorage();
+            renderPromemoria();
+            updateStats();
+            closeEditModal();
+        };
 
         // GitHub Sync
         window.syncToGitHub = async function() {
